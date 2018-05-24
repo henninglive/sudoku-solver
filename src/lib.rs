@@ -1,27 +1,39 @@
 const SIZE: usize = 3;
 const DSIZE: usize = SIZE * SIZE;
+
+/// Used bits of Cell::Unknown.
 const MASK: u16 = ((1usize << DSIZE) - 1) as u16;
 
+/// Sudoku cell
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Cell {
-    Known{ value: u8 },
-    Unknown{ candidates: u16 },
+    /// We know the exact value of the cell so we store that value.
+    Known(u8),
+    /// There are multiple candidate for this cell. As an optimization
+    /// we use the u16 as bitset and set one bit for each possible value.
+    Unknown(u16),
 }
 
+/// Search status
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Status {
+    /// Some cells where resolved, continue trying to resolve cells.
     Progressing,
+    /// We are unable to progress, we make a guess.
     Halted,
+    /// Found a solution.
     Solved,
 }
 
+/// Sudoku board
 #[derive(Debug)]
-pub struct Grid(Vec<Cell>);
+pub struct Board(Vec<Cell>);
 
 impl Cell {
+    /// Convert cell to bitset, one bit per possible value for cell.
     fn to_bit_vec(&self) -> Vec<bool> {
         match *self {
-            Cell::Known{ ref value } => {
+            Cell::Known( ref value ) => {
                 (1..(DSIZE + 1)).map(|i| {
                     if i == *value as usize {
                         true
@@ -31,8 +43,8 @@ impl Cell {
                 })
                 .collect::<Vec<_>>()
             },
-            Cell::Unknown{ ref candidates } => {
-                let mut c = *candidates;
+            Cell::Unknown( ref cands ) => {
+                let mut c = *cands;
                 let mut v = Vec::new();
                 for _ in 0..DSIZE {
                     if c & 1 == 1 {
@@ -48,36 +60,32 @@ impl Cell {
     }
 }
 
-impl Grid {
-    pub fn new(data: &[u8]) -> Grid {
+impl Board {
+    pub fn new(data: &[u8]) -> Board {
         assert!(data.len() == DSIZE * DSIZE);
         assert!((1usize).checked_shl((DSIZE - 1) as u32).unwrap() < <u16>::max_value() as usize);
 
-        Grid(data.iter().map(|i| {
+        Board(data.iter().map(|i| {
             match *i {
-                0 => Cell::Unknown{ candidates: <u16>::max_value() },
-                i if i as usize > DSIZE => panic!(),
-                i => Cell::Known{ value: i},
+                0 => Cell::Unknown(MASK & <u16>::max_value()),
+                i if i as usize > DSIZE => panic!("Cell value must be less then {}", DSIZE),
+                i => Cell::Known(i),
             }
         }).collect::<Vec<_>>())
     }
 
-    fn solve_squares(&mut self) {
+    fn solve_squares(&mut self) -> bool {
         for sy in 0..SIZE {
             for sx in 0..SIZE {
-                #[cfg(debug_assertions)]
-                let mut test = [false; DSIZE];
-
-                let mut cand = <u16>::max_value();
+                let mut cand = MASK & <u16>::max_value();
                 for y in 0..SIZE {
                     for x in 0..SIZE {
                         let i = (sy * SIZE + y) * DSIZE + sx * SIZE + x;
                         match self.0[i] {
-                            Cell::Known{ref value} => {
-                                #[cfg(debug_assertions)]
-                                {
-                                    assert_eq!(test[(value - 1) as usize], false);
-                                    test[(value - 1) as usize] = true;
+                            Cell::Known(ref value) => {
+                                if cand & (1 << (*value - 1)) == 0 {
+                                    // Error encountered, we need to backtrack.
+                                    return false;
                                 }
                                 cand &= !(1 << (*value - 1))
                             },
@@ -90,28 +98,31 @@ impl Grid {
                     for x in 0..SIZE {
                         let i = (sy * SIZE + y) * DSIZE + sx * SIZE + x;
                         match self.0[i] {
-                            Cell::Unknown{ref mut candidates} => *candidates &= cand,
+                            Cell::Unknown(ref mut c) => {
+                                *c &= cand;
+                                if *c == 0 {
+                                    // No valid value, we need to backtrack.
+                                    return false;
+                                }
+                            },
                             _ => (),
                         }
                     }
                 }
             }
         }
+        true
     }
 
-    fn solve_rows(&mut self) {
+    fn solve_rows(&mut self) -> bool {
         for row in self.0.chunks_mut(DSIZE) {
-            #[cfg(debug_assertions)]
-            let mut test = [false; DSIZE];
-
-            let mut cand = <u16>::max_value();
+            let mut cand = MASK & <u16>::max_value();
             for i in row.iter() {
                 match i {
-                    &Cell::Known{ref value} => {
-                        #[cfg(debug_assertions)]
-                        {
-                            assert_eq!(test[(value - 1) as usize], false);
-                            test[(value - 1) as usize] = true;
+                    &Cell::Known(ref value) => {
+                        if cand & (1 << (*value - 1)) == 0 {
+                            // Error encountered, we need to backtrack.
+                            return false;
                         }
                         cand &= !(1 << (*value - 1))
                     },
@@ -121,26 +132,29 @@ impl Grid {
 
             for i in row.iter_mut() {
                 match i {
-                    &mut Cell::Unknown{ref mut candidates} => *candidates &= cand,
+                    &mut Cell::Unknown(ref mut c) => {
+                        *c &= cand;
+                        if *c == 0 {
+                            // No valid value, we need to backtrack. 
+                            return false;
+                        }
+                    },
                     _ => (),
                 }
             }
         }
+        true
     }
 
-    fn solve_columns(&mut self) {
+    fn solve_columns(&mut self) -> bool {
         for x in 0..DSIZE {
-            #[cfg(debug_assertions)]
-            let mut test = [false; DSIZE];
-
-            let mut cand = <u16>::max_value();
+            let mut cand = MASK & <u16>::max_value();
             for y in 0..DSIZE {
                 match self.0[y * DSIZE + x] {
-                    Cell::Known{ref value} => {
-                        #[cfg(debug_assertions)]
-                        {
-                            assert_eq!(test[(value - 1) as usize], false);
-                            test[(value - 1) as usize] = true;
+                    Cell::Known(ref value) => {
+                        if cand & (1 << (*value - 1)) == 0 {
+                            // Error encountered, we need to backtrack.
+                            return false;
                         }
                         cand &= !(1 << (*value - 1))
                     },
@@ -150,11 +164,17 @@ impl Grid {
 
             for y in 0..DSIZE {
                 match self.0[y * DSIZE + x] {
-                    Cell::Unknown{ref mut candidates} => *candidates &= cand,
+                    Cell::Unknown(ref mut c) => {
+                        *c &= cand;
+                        if *c == 0 {
+                            return false;
+                        }
+                    },
                     _ => (),
                 }
             }
         }
+        true
     }
 
     fn resolve(&mut self) -> Status {
@@ -163,11 +183,11 @@ impl Grid {
 
         for i in self.0.iter_mut() {
             let new_value = match i {
-                &mut Cell::Unknown{ ref mut candidates } => {
+                &mut Cell::Unknown( ref c ) => {
                     done = false;
-                    let mut cand = MASK & *candidates;
+                    let mut cand = MASK & *c;
                     match cand.count_ones() {
-                        0 => panic!("No valid candidates"),
+                        0 => panic!("No valid value"),
                         1 => {
                             let mut i = 0;
                             loop {
@@ -185,7 +205,7 @@ impl Grid {
                 _ => continue,
             };
 
-            *i = Cell::Known{ value: new_value + 1 };
+            *i = Cell::Known( new_value + 1 );
             progressing = true;
         }
 
@@ -196,32 +216,59 @@ impl Grid {
         }
     }
 
-    pub fn solve(&mut self) {
-        loop {
-            self.solve_columns();
-            self.solve_rows();
-            self.solve_squares();
-            match self.resolve() {
-                Status::Solved => break,
-                Status::Progressing => (),
-                Status::Halted => {
-                    for (i, cell) in self.0.iter().enumerate() {
-                        match cell {
-                            &Cell::Unknown{ ref candidates } => {
-                                let mut cand = *candidates;
-                                let mut n = 1u8;
-                                while cand & 1 == 0 && n <= DSIZE as u8 {
-                                    cand >>= 1;
-                                    n += 1;
-                                }
+    fn guess(&mut self) -> bool {
+        for i in 0..(DSIZE * DSIZE) {
+            match self.0[i] {
+                Cell::Unknown(cand) => {
+                    for n in 0..DSIZE {
+                        if cand & (1 << n) != 0 {
+                            let mut new = Board(self.0.clone());
+                            new.0[i] = Cell::Known((n + 1) as u8);
 
-                                let mut new = Grid(self.0.clone());
-                                new.0[i] = Cell::Known{value: n};
-                                new.solve();
-                                return;
-                            },
-                            _ => (),
+                            return if new.solve() {
+                                // We found the solution
+                                self.0 = new.0;
+                                true
+                            } else {
+                                // We hit an error, We now know that
+                                // this is not valid value for this cell.
+                                match self.0.get_mut(i).unwrap() {
+                                    &mut Cell::Unknown(ref mut cand) => {
+                                        *cand &= !(1 << n);
+                                        false
+                                    },
+                                    _ => unreachable!("Unexpected unknown"),
+                                }
+                            };
                         }
+                    }
+                },
+                _ => (),
+            }
+        }
+        unreachable!("No valid guess")
+    }
+
+    pub fn solve(&mut self) -> bool {
+        loop {
+            if !self.solve_columns() {
+                return false;
+            }
+
+            if !self.solve_rows() {
+                return false;
+            }
+
+            if !self.solve_squares() {
+                return false;
+            }
+
+            match self.resolve() {
+                Status::Progressing => (),
+                Status::Solved => break true,
+                Status::Halted => {
+                    if self.guess() {
+                        break true;
                     }
                 },
             }
@@ -232,11 +279,11 @@ impl Grid {
         let mut s = String::new();
         text_line(&mut s, '╔', '═', '╤', '╦', '╗');
 
-        let grid = self.0.iter()
+        let board = self.0.iter()
             .map(|cell| cell.to_bit_vec())
             .collect::<Vec<_>>();
 
-        for (i, row) in grid.chunks(DSIZE).enumerate() {
+        for (i, row) in board.chunks(DSIZE).enumerate() {
             for cell_y in 0..SIZE {
                 for (j, cell) in row.iter().enumerate() {
                     if j == 0 {
@@ -299,10 +346,127 @@ fn text_line(s: &mut String, start: char, line: char,
 mod tests {
     use ::*;
 
+    #[test]
+    fn validate_square() {
+        let mut valid = Board::new(&[
+            1,2,3,  0,2,3,  0,0,0,
+            4,5,6,  4,5,6,  4,5,6,
+            7,8,9,  7,8,9,  7,8,9,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+        ][..]);
+
+        assert!(valid.solve_squares());
+        assert_eq!(valid.0[3], Cell::Unknown(0b1));
+        assert_eq!(valid.0[6], Cell::Unknown(0b111));
+        assert_eq!(valid.0[7], Cell::Unknown(0b111));
+        assert_eq!(valid.0[8], Cell::Unknown(0b111));
+
+        let mut invalid = Board::new(&[
+            1,1,1,  0,0,0,  0,0,0,
+            2,2,2,  0,0,0,  0,0,0,
+            3,3,3,  0,0,0,  0,0,0,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+        ][..]);
+
+        assert!(!invalid.solve_squares());
+    }
+
+    #[test]
+    fn validate_row() {
+        let mut valid = Board::new(&[
+            1,2,3,  4,5,6,  7,8,9,
+            0,2,3,  4,5,6,  7,8,9,
+            0,0,0,  4,5,6,  7,8,9,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+        ][..]);
+
+        assert!(valid.solve_rows());
+        assert_eq!(valid.0[DSIZE], Cell::Unknown(0b1));
+        assert_eq!(valid.0[2 * DSIZE],     Cell::Unknown(0b111));
+        assert_eq!(valid.0[2 * DSIZE + 1], Cell::Unknown(0b111));
+        assert_eq!(valid.0[2 * DSIZE + 2], Cell::Unknown(0b111));
+
+        let mut invalid = Board::new(&[
+            1,1,1,  2,2,2,  3,3,3,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+            0,0,0,  0,0,0,  0,0,0,
+        ][..]);
+
+        assert!(!invalid.solve_rows());
+    }
+
+    #[test]
+    fn validate_columns() {
+        let mut valid = Board::new(&[
+            1,0,0,  0,0,0,  0,0,0,
+            2,2,0,  0,0,0,  0,0,0,
+            3,3,0,  0,0,0,  0,0,0,
+
+            4,4,4,  0,0,0,  0,0,0,
+            5,5,5,  0,0,0,  0,0,0,
+            6,6,6,  0,0,0,  0,0,0,
+
+            7,7,7,  0,0,0,  0,0,0,
+            8,8,8,  0,0,0,  0,0,0,
+            9,9,9,  0,0,0,  0,0,0,
+        ][..]);
+
+        assert!(valid.solve_columns());
+        assert_eq!(valid.0[1], Cell::Unknown(1));
+        assert_eq!(valid.0[2],             Cell::Unknown(0b111));
+        assert_eq!(valid.0[DSIZE + 2],     Cell::Unknown(0b111));
+        assert_eq!(valid.0[2 * DSIZE + 2], Cell::Unknown(0b111));
+
+        let mut invalid = Board::new(&[
+            1,0,0,  0,0,0,  0,0,0,
+            1,0,0,  0,0,0,  0,0,0,
+            1,0,0,  0,0,0,  0,0,0,
+
+            2,0,0,  0,0,0,  0,0,0,
+            2,0,0,  0,0,0,  0,0,0,
+            2,0,0,  0,0,0,  0,0,0,
+
+            3,0,0,  0,0,0,  0,0,0,
+            3,0,0,  0,0,0,  0,0,0,
+            4,0,0,  0,0,0,  0,0,0,
+        ][..]);
+
+        assert!(!invalid.solve_columns());
+    }
+
     fn test_board(board: &[u8]) {
-        let mut grid = Grid::new(&board);
-        grid.solve();
-        for e in grid.0.iter() {
+        let mut board = Board::new(&board);
+        assert!(board.solve());
+        for e in board.0.iter() {
             match e {
                 &Cell::Known{ .. } => (),
                 _ => panic!("Unknown cell value after solve"),
@@ -313,17 +477,17 @@ mod tests {
     #[test]
     fn board_simple() {
         test_board(&[
-            0, 8, 7,  0, 1, 0,  0, 0, 0,
-            0, 0, 4,  8, 0, 0,  1, 2, 0,
-            0, 0, 1,  7, 0, 5,  6, 0, 9,
+            0,8,7,  0,1,0,  0,0,0,
+            0,0,4,  8,0,0,  1,2,0,
+            0,0,1,  7,0,5,  6,0,9,
 
-            8, 1, 0,  0, 0, 0,  2, 0, 0,
-            0, 6, 0,  0, 0, 0,  0, 5, 0,
-            0, 0, 9,  0, 0, 0,  0, 6, 4,
+            8,1,0,  0,0,0,  2,0,0,
+            0,6,0,  0,0,0,  0,5,0,
+            0,0,9,  0,0,0,  0,6,4,
 
-            5, 0, 6,  1, 0, 7,  9, 0, 0,
-            0, 3, 2,  0, 0, 9,  5, 0, 0,
-            0, 0, 0,  0, 6, 0,  4, 7, 0,
+            5,0,6,  1,0,7,  9,0,0,
+            0,3,2,  0,0,9,  5,0,0,
+            0,0,0,  0,6,0,  4,7,0,
         ][..]);
     }
 
