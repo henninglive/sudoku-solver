@@ -1,5 +1,5 @@
-const SIZE: usize = 3;
-const DSIZE: usize = SIZE * SIZE;
+pub const SIZE: usize = 3;
+pub const DSIZE: usize = SIZE * SIZE;
 
 /// Used bits of Cell::Unknown.
 const MASK: u16 = ((1usize << DSIZE) - 1) as u16;
@@ -61,17 +61,24 @@ impl Cell {
 }
 
 impl Board {
-    pub fn new(data: &[u8]) -> Board {
-        assert!(data.len() == DSIZE * DSIZE);
-        assert!((1usize).checked_shl((DSIZE - 1) as u32).unwrap() < <u16>::max_value() as usize);
+    pub fn new(data: &[u8]) -> Result<Board, ()> {
+        if data.len() != DSIZE * DSIZE {
+            return Err(());
+        }
 
-        Board(data.iter().map(|i| {
+        let mut b = Board(data.iter().map(|i| {
             match *i {
                 0 => Cell::Unknown(MASK & <u16>::max_value()),
                 i if i as usize > DSIZE => panic!("Cell value must be less then {}", DSIZE),
                 i => Cell::Known(i),
             }
-        }).collect::<Vec<_>>())
+        }).collect::<Vec<_>>());
+
+        b.solve_squares()?;
+        b.solve_rows()?;
+        b.solve_columns()?;
+
+        Ok(b)
     }
 
     fn solve_squares(&mut self) -> Result<(), ()> {
@@ -340,9 +347,23 @@ fn text_line(s: &mut String, start: char, line: char,
 mod tests {
     use ::*;
 
+    fn test_board(data: &[u8]) -> Board {
+        Board(
+            data.iter()
+            .map(|i| {
+                match *i {
+                    0 => Cell::Unknown(MASK & <u16>::max_value()),
+                    i if i as usize > DSIZE => panic!("Cell value must be less then {}", DSIZE),
+                    i => Cell::Known(i),
+                }
+            })
+            .collect::<Vec<_>>()
+        )
+    }
+
     #[test]
     fn validate_square() {
-        let mut valid = Board::new(&[
+        let mut valid = test_board(&[
             1,2,3,  0,2,3,  0,0,0,
             4,5,6,  4,5,6,  4,5,6,
             7,8,9,  7,8,9,  7,8,9,
@@ -354,7 +375,7 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
-        ][..]);
+        ]);
 
         assert!(valid.solve_squares().is_ok());
         assert_eq!(valid.0[3], Cell::Unknown(0b1));
@@ -362,7 +383,7 @@ mod tests {
         assert_eq!(valid.0[7], Cell::Unknown(0b111));
         assert_eq!(valid.0[8], Cell::Unknown(0b111));
 
-        let mut invalid = Board::new(&[
+        let mut invalid = test_board(&[
             1,1,1,  0,0,0,  0,0,0,
             2,2,2,  0,0,0,  0,0,0,
             3,3,3,  0,0,0,  0,0,0,
@@ -374,14 +395,14 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
-        ][..]);
+        ]);
 
         assert!(invalid.solve_squares().is_err());
     }
 
     #[test]
     fn validate_row() {
-        let mut valid = Board::new(&[
+        let mut valid = test_board(&[
             1,2,3,  4,5,6,  7,8,9,
             0,2,3,  4,5,6,  7,8,9,
             0,0,0,  4,5,6,  7,8,9,
@@ -393,7 +414,7 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
-        ][..]);
+        ]);
 
         assert!(valid.solve_rows().is_ok());
         assert_eq!(valid.0[DSIZE], Cell::Unknown(0b1));
@@ -401,7 +422,7 @@ mod tests {
         assert_eq!(valid.0[2 * DSIZE + 1], Cell::Unknown(0b111));
         assert_eq!(valid.0[2 * DSIZE + 2], Cell::Unknown(0b111));
 
-        let mut invalid = Board::new(&[
+        let mut invalid = test_board(&[
             1,1,1,  2,2,2,  3,3,3,
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
@@ -413,14 +434,14 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
             0,0,0,  0,0,0,  0,0,0,
-        ][..]);
+        ]);
 
         assert!(invalid.solve_rows().is_err());
     }
 
     #[test]
     fn validate_columns() {
-        let mut valid = Board::new(&[
+        let mut valid = test_board(&[
             1,0,0,  0,0,0,  0,0,0,
             2,2,0,  0,0,0,  0,0,0,
             3,3,0,  0,0,0,  0,0,0,
@@ -432,7 +453,7 @@ mod tests {
             7,7,7,  0,0,0,  0,0,0,
             8,8,8,  0,0,0,  0,0,0,
             9,9,9,  0,0,0,  0,0,0,
-        ][..]);
+        ]);
 
         assert!(valid.solve_columns().is_ok());
         assert_eq!(valid.0[1], Cell::Unknown(1));
@@ -440,7 +461,7 @@ mod tests {
         assert_eq!(valid.0[DSIZE + 2],     Cell::Unknown(0b111));
         assert_eq!(valid.0[2 * DSIZE + 2], Cell::Unknown(0b111));
 
-        let mut invalid = Board::new(&[
+        let mut invalid = test_board(&[
             1,0,0,  0,0,0,  0,0,0,
             1,0,0,  0,0,0,  0,0,0,
             1,0,0,  0,0,0,  0,0,0,
@@ -452,13 +473,13 @@ mod tests {
             3,0,0,  0,0,0,  0,0,0,
             3,0,0,  0,0,0,  0,0,0,
             4,0,0,  0,0,0,  0,0,0,
-        ][..]);
+        ]);
 
         assert!(invalid.solve_columns().is_err());
     }
 
-    fn test_board(board: &[u8]) {
-        let mut board = Board::new(&board);
+    fn solve_board(board: &[u8]) {
+        let mut board = Board::new(&board).unwrap();
         assert!(board.solve().is_ok());
         for e in board.0.iter() {
             match e {
@@ -470,7 +491,7 @@ mod tests {
 
     #[test]
     fn board_simple() {
-        test_board(&[
+        solve_board(&[
             0,8,7,  0,1,0,  0,0,0,
             0,0,4,  8,0,0,  1,2,0,
             0,0,1,  7,0,5,  6,0,9,
@@ -487,7 +508,7 @@ mod tests {
 
     #[test]
     fn board_easy() {
-        test_board(&[
+        solve_board(&[
             1,0,4,  0,0,0,  3,0,6,
             8,0,9,  0,3,0,  5,7,0,
             0,0,0,  0,7,0,  1,0,0,
@@ -504,7 +525,7 @@ mod tests {
 
     #[test]
     fn board_hard() {
-        test_board(&[
+        solve_board(&[
             2,9,0,  1,0,0,  0,0,5,
             0,7,0,  0,5,0,  0,0,0,
             0,8,0,  0,0,0,  6,0,0,
@@ -521,7 +542,7 @@ mod tests {
 
     #[test]
     fn board_hard2() {
-        test_board(&[
+        solve_board(&[
             8,0,0, 5,9,0, 3,0,1,
             0,2,0, 7,0,0, 8,0,0,
             0,0,0, 8,0,0, 0,0,2,
@@ -538,7 +559,7 @@ mod tests {
 
     #[test]
     fn board_evil() {
-        test_board(&[
+        solve_board(&[
             0,9,0,  0,0,0,  7,0,0,
             0,0,0,  0,1,0,  0,0,8,
             0,2,0,  6,0,9,  0,0,0,
@@ -555,7 +576,7 @@ mod tests {
 
     #[test]
     fn board_evil2() {
-        test_board(&[
+        solve_board(&[
             2,0,0, 0,8,5, 0,9,1,
             0,0,0, 2,0,0, 0,7,0,
             0,0,6, 0,0,0, 0,0,5,
@@ -572,7 +593,7 @@ mod tests {
 
     #[test]
     fn board_erica() {
-        test_board(&[
+        solve_board(&[
             9,0,3,  0,2,0,  0,7,0,
             0,6,0,  0,0,0,  0,2,0,
             7,0,0,  0,0,9,  3,0,0,
@@ -589,7 +610,7 @@ mod tests {
 
     #[test]
     fn board_test() {
-        test_board(&[
+        solve_board(&[
             9,0,3,  0,2,0,  0,7,0,
             1,6,0,  0,0,0,  0,2,0,
             7,0,0,  0,0,9,  3,0,0,
