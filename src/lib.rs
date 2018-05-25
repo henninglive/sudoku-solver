@@ -74,7 +74,7 @@ impl Board {
         }).collect::<Vec<_>>())
     }
 
-    fn solve_squares(&mut self) -> bool {
+    fn solve_squares(&mut self) -> Result<(), ()> {
         for sy in 0..SIZE {
             for sx in 0..SIZE {
                 let mut cand = MASK & <u16>::max_value();
@@ -85,7 +85,7 @@ impl Board {
                             Cell::Known(ref value) => {
                                 if cand & (1 << (*value - 1)) == 0 {
                                     // Error encountered, we need to backtrack.
-                                    return false;
+                                    return Err(());
                                 }
                                 cand &= !(1 << (*value - 1))
                             },
@@ -102,7 +102,7 @@ impl Board {
                                 *c &= cand;
                                 if *c == 0 {
                                     // No valid value, we need to backtrack.
-                                    return false;
+                                    return Err(());
                                 }
                             },
                             _ => (),
@@ -111,10 +111,10 @@ impl Board {
                 }
             }
         }
-        true
+        Ok(())
     }
 
-    fn solve_rows(&mut self) -> bool {
+    fn solve_rows(&mut self) -> Result<(), ()> {
         for row in self.0.chunks_mut(DSIZE) {
             let mut cand = MASK & <u16>::max_value();
             for i in row.iter() {
@@ -122,7 +122,7 @@ impl Board {
                     &Cell::Known(ref value) => {
                         if cand & (1 << (*value - 1)) == 0 {
                             // Error encountered, we need to backtrack.
-                            return false;
+                            return Err(());
                         }
                         cand &= !(1 << (*value - 1))
                     },
@@ -136,17 +136,17 @@ impl Board {
                         *c &= cand;
                         if *c == 0 {
                             // No valid value, we need to backtrack. 
-                            return false;
+                            return Err(());
                         }
                     },
                     _ => (),
                 }
             }
         }
-        true
+        Ok(())
     }
 
-    fn solve_columns(&mut self) -> bool {
+    fn solve_columns(&mut self) -> Result<(), ()> {
         for x in 0..DSIZE {
             let mut cand = MASK & <u16>::max_value();
             for y in 0..DSIZE {
@@ -154,7 +154,7 @@ impl Board {
                     Cell::Known(ref value) => {
                         if cand & (1 << (*value - 1)) == 0 {
                             // Error encountered, we need to backtrack.
-                            return false;
+                            return Err(());
                         }
                         cand &= !(1 << (*value - 1))
                     },
@@ -167,14 +167,14 @@ impl Board {
                     Cell::Unknown(ref mut c) => {
                         *c &= cand;
                         if *c == 0 {
-                            return false;
+                            return Err(());
                         }
                     },
                     _ => (),
                 }
             }
         }
-        true
+        Ok(())
     }
 
     fn resolve(&mut self) -> Status {
@@ -216,7 +216,7 @@ impl Board {
         }
     }
 
-    fn guess(&mut self) -> bool {
+    fn guess(&mut self) -> Result<(), ()> {
         for i in 0..(DSIZE * DSIZE) {
             match self.0[i] {
                 Cell::Unknown(cand) => {
@@ -225,20 +225,23 @@ impl Board {
                             let mut new = Board(self.0.clone());
                             new.0[i] = Cell::Known((n + 1) as u8);
 
-                            return if new.solve() {
-                                // We found the solution
-                                self.0 = new.0;
-                                true
-                            } else {
-                                // We hit an error, We now know that
-                                // this is not valid value for this cell.
-                                match self.0.get_mut(i).unwrap() {
-                                    &mut Cell::Unknown(ref mut cand) => {
-                                        *cand &= !(1 << n);
-                                        false
-                                    },
-                                    _ => unreachable!("Unexpected unknown"),
-                                }
+                            return match new.solve() {
+                                Ok(()) => {
+                                    // We found the solution
+                                    self.0 = new.0;
+                                    Ok(())
+                                },
+                                Err(()) => {
+                                    // We hit an error, We now know that
+                                    // this is not valid value for this cell.
+                                    match self.0.get_mut(i).unwrap() {
+                                        &mut Cell::Unknown(ref mut cand) => {
+                                            *cand &= !(1 << n);
+                                            Err(())
+                                        },
+                                        _ => unreachable!("Unexpected unknown"),
+                                    }
+                                },
                             };
                         }
                     }
@@ -249,26 +252,17 @@ impl Board {
         unreachable!("No valid guess")
     }
 
-    pub fn solve(&mut self) -> bool {
+    pub fn solve(&mut self) -> Result<(), ()> {
         loop {
-            if !self.solve_columns() {
-                return false;
-            }
-
-            if !self.solve_rows() {
-                return false;
-            }
-
-            if !self.solve_squares() {
-                return false;
-            }
-
+            self.solve_columns()?;
+            self.solve_rows()?;
+            self.solve_squares()?;
             match self.resolve() {
                 Status::Progressing => (),
-                Status::Solved => break true,
+                Status::Solved => break Ok(()),
                 Status::Halted => {
-                    if self.guess() {
-                        break true;
+                    if let Ok(_) = self.guess() {
+                        break Ok(());
                     }
                 },
             }
@@ -362,7 +356,7 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
         ][..]);
 
-        assert!(valid.solve_squares());
+        assert!(valid.solve_squares().is_ok());
         assert_eq!(valid.0[3], Cell::Unknown(0b1));
         assert_eq!(valid.0[6], Cell::Unknown(0b111));
         assert_eq!(valid.0[7], Cell::Unknown(0b111));
@@ -382,7 +376,7 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
         ][..]);
 
-        assert!(!invalid.solve_squares());
+        assert!(invalid.solve_squares().is_err());
     }
 
     #[test]
@@ -401,7 +395,7 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
         ][..]);
 
-        assert!(valid.solve_rows());
+        assert!(valid.solve_rows().is_ok());
         assert_eq!(valid.0[DSIZE], Cell::Unknown(0b1));
         assert_eq!(valid.0[2 * DSIZE],     Cell::Unknown(0b111));
         assert_eq!(valid.0[2 * DSIZE + 1], Cell::Unknown(0b111));
@@ -421,7 +415,7 @@ mod tests {
             0,0,0,  0,0,0,  0,0,0,
         ][..]);
 
-        assert!(!invalid.solve_rows());
+        assert!(invalid.solve_rows().is_err());
     }
 
     #[test]
@@ -440,7 +434,7 @@ mod tests {
             9,9,9,  0,0,0,  0,0,0,
         ][..]);
 
-        assert!(valid.solve_columns());
+        assert!(valid.solve_columns().is_ok());
         assert_eq!(valid.0[1], Cell::Unknown(1));
         assert_eq!(valid.0[2],             Cell::Unknown(0b111));
         assert_eq!(valid.0[DSIZE + 2],     Cell::Unknown(0b111));
@@ -460,12 +454,12 @@ mod tests {
             4,0,0,  0,0,0,  0,0,0,
         ][..]);
 
-        assert!(!invalid.solve_columns());
+        assert!(invalid.solve_columns().is_err());
     }
 
     fn test_board(board: &[u8]) {
         let mut board = Board::new(&board);
-        assert!(board.solve());
+        assert!(board.solve().is_ok());
         for e in board.0.iter() {
             match e {
                 &Cell::Known{ .. } => (),
