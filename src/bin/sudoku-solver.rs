@@ -1,4 +1,5 @@
 extern crate sudoku_solver as ss;
+
 use ss::DSIZE;
 
 fn main() {
