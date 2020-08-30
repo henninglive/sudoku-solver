@@ -1,6 +1,6 @@
 extern crate sudoku_solver as ss;
 
-use ss::DSIZE;
+use ss::Board;
 
 fn main() {
     let data = std::env::args()
@@ -9,13 +9,12 @@ fn main() {
         .filter_map(|c| c.to_digit(10).map(|i| i as u8))
         .collect::<Vec<_>>();
 
-    let cells = data.get(..(DSIZE * DSIZE))
+    let cells = data.get(..(Board::DSIZE * Board::DSIZE))
         .expect("Incomplete board");
 
-    let mut b = ss::Board::new(cells)
-        .expect("Invalid board");
+    let board = Board::from_values(cells)
+        .solve()
+        .expect("Failed to solve board");
 
-    b.solve().expect("Failed to solve board");
-
-    println!("{}", b.text());
+    println!("{}", board);
 }
